@@ -1,4 +1,5 @@
 "use client";
+import { useState, useEffect, useCallback } from "react";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import Chip from "@mui/material/Chip";
@@ -7,76 +8,129 @@ import Divider from "@mui/material/Divider";
 import Checkbox from "@mui/material/Checkbox";
 import Avatar from "@mui/material/Avatar";
 import IconButton from "@mui/material/IconButton";
+import CircularProgress from "@mui/material/CircularProgress";
 import MenuIcon from "@mui/icons-material/Menu";
 import SyncOutlined from "@mui/icons-material/SyncOutlined";
 import ArrowDropDown from "@mui/icons-material/ArrowDropDown";
 import CheckIcon from "@mui/icons-material/Check";
+import { useAuth } from "../context/AuthContext";
+import {
+  emailApi,
+  type MailboxEmail,
+  type FetchEmailsParams,
+} from "../lib/api";
+import type { EmailFolder } from "../types";
 
-interface EmailItem {
-  id: number;
-  subject: string;
-  sender: string;
-  preview: string;
-  date: string;
-  badgeCount?: number;
-  avatarColor: string;
-  avatarInitials: string;
+const AVATAR_COLORS = [
+  "#7B6BA8", "#5C8A5C", "#C4A265", "#6B8EAD",
+  "#AD6B6B", "#4A5C92", "#BA1A1A",
+];
+
+function getAvatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
-const emails: EmailItem[] = [
-  {
-    id: 1,
-    subject: "New Business Opportunities",
-    sender: "Jack Smith",
-    preview: "Dear Sam, Hope this email finds you well. I would like t...",
-    date: "Now",
-    badgeCount: 3,
-    avatarColor: "#7B6BA8",
-    avatarInitials: "JS",
-  },
-  {
-    id: 2,
-    subject: "RE: Project Progress",
-    sender: "Sarah Pruett",
-    preview: "Reminder on the mentioned bel...",
-    date: "Yesterday",
-    badgeCount: 2,
-    avatarColor: "#5C8A5C",
-    avatarInitials: "SP",
-  },
-  {
-    id: 3,
-    subject: "LPO Created",
-    sender: "Jasmine Fields",
-    preview: "Hello Sam, Cloud you please sign the issued LPO for the new pur...",
-    date: "Yesterday",
-    badgeCount: 5,
-    avatarColor: "#C4A265",
-    avatarInitials: "JF",
-  },
-  {
-    id: 4,
-    subject: "Insurance Requested Documents",
-    sender: "Dan Trovalds",
-    preview: "Dear Sam, I hope my message finds you in your best health ...",
-    date: "02/Feb/2026",
-    avatarColor: "#6B8EAD",
-    avatarInitials: "DT",
-  },
-  {
-    id: 5,
-    subject: "Update Request",
-    sender: "Christine Woods",
-    preview: "Dear Sam, I would like you to prepare a detailed project up...",
-    date: "22/Dec/2025",
-    avatarColor: "#AD6B6B",
-    avatarInitials: "CW",
-  },
-];
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2)
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
+
+function formatDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diff = now.getTime() - d.getTime();
+  const oneDay = 86_400_000;
+
+  if (diff < oneDay && d.getDate() === now.getDate()) {
+    return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+  }
+  if (diff < 2 * oneDay) return "Yesterday";
+  return d.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+interface EmailListProps {
+  folder: EmailFolder;
+  onSelectEmail: (email: MailboxEmail) => void;
+  selectedUid?: number;
+}
 
 const filterChips = ["All", "Read", "Today", "Unread"];
 
-export default function EmailList() {
+type FilterKey = "all" | "seen" | "today" | "unseen";
+const filterMap: Record<string, FilterKey> = {
+  All: "all",
+  Read: "seen",
+  Today: "today",
+  Unread: "unseen",
+};
+
+const FOLDER_LABELS: Record<EmailFolder, string> = {
+  inbox: "Inbox",
+  sent: "Sent",
+  drafts: "Drafts",
+  trash: "Trash",
+  spam: "Spam",
+  starred: "Starred",
+};
+
+export default function EmailList({
+  folder,
+  onSelectEmail,
+  selectedUid,
+}: EmailListProps) {
+  const { token } = useAuth();
+  const [emails, setEmails] = useState<MailboxEmail[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [activeFilter, setActiveFilter] = useState("All");
+
+  const fetchEmails = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const params: FetchEmailsParams = { limit: 50 };
+      if (activeFilter === "Read") params.flag = "seen";
+      else if (activeFilter === "Unread") params.flag = "unseen";
+      else if (activeFilter === "Today") {
+        params.since = new Date().toISOString().split("T")[0];
+      }
+
+      const fetcher =
+        emailApi[folder as keyof typeof emailApi] as typeof emailApi.inbox;
+      const result = await fetcher(token, params);
+      setEmails(result.emails);
+      setTotal(result.total);
+    } catch (err) {
+      console.error("Failed to fetch emails:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [token, folder, activeFilter]);
+
+  useEffect(() => {
+    fetchEmails();
+  }, [fetchEmails]);
+
+  const handleFilterClick = (label: string) => {
+    setActiveFilter(label);
+  };
+
+  const handleClear = () => {
+    setActiveFilter("All");
+  };
+
+  const unseenCount = emails.filter((e) => !e.isRead).length;
+
   return (
     <Box
       sx={{
@@ -102,7 +156,9 @@ export default function EmailList() {
           <MenuIcon />
         </IconButton>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <SyncOutlined sx={{ fontSize: 24, color: "#49454F" }} />
+          <IconButton size="small" onClick={fetchEmails} sx={{ color: "#49454F" }}>
+            <SyncOutlined sx={{ fontSize: 24 }} />
+          </IconButton>
           <Typography
             sx={{
               fontSize: 16,
@@ -112,7 +168,7 @@ export default function EmailList() {
               color: "#000",
             }}
           >
-            Inbox (4)
+            {FOLDER_LABELS[folder]} ({unseenCount > 0 ? unseenCount : total})
           </Typography>
           <ArrowDropDown sx={{ color: "#49454F" }} />
         </Box>
@@ -135,36 +191,41 @@ export default function EmailList() {
           overflow: "hidden",
         }}
       >
-        {filterChips.map((label, index) => (
-          <Chip
-            key={label}
-            label={label}
-            icon={index === 0 ? <CheckIcon sx={{ fontSize: 18 }} /> : undefined}
-            variant={index === 0 ? "filled" : "outlined"}
-            clickable
-            sx={{
-              height: 32,
-              borderRadius: "8px",
-              fontWeight: 500,
-              fontSize: 14,
-              letterSpacing: 0.1,
-              ...(index === 0
-                ? {
-                    bgcolor: "#DDE1F9",
-                    color: "#414659",
-                    "&:hover": { bgcolor: "#CDD1E9" },
-                    "& .MuiChip-icon": { color: "#414659" },
-                  }
-                : {
-                    borderColor: "#757680",
-                    color: "#45464F",
-                  }),
-            }}
-          />
-        ))}
+        {filterChips.map((label) => {
+          const isActive = activeFilter === label;
+          return (
+            <Chip
+              key={label}
+              label={label}
+              icon={isActive ? <CheckIcon sx={{ fontSize: 18 }} /> : undefined}
+              variant={isActive ? "filled" : "outlined"}
+              clickable
+              onClick={() => handleFilterClick(label)}
+              sx={{
+                height: 32,
+                borderRadius: "8px",
+                fontWeight: 500,
+                fontSize: 14,
+                letterSpacing: 0.1,
+                ...(isActive
+                  ? {
+                      bgcolor: "#DDE1F9",
+                      color: "#414659",
+                      "&:hover": { bgcolor: "#CDD1E9" },
+                      "& .MuiChip-icon": { color: "#414659" },
+                    }
+                  : {
+                      borderColor: "#757680",
+                      color: "#45464F",
+                    }),
+              }}
+            />
+          );
+        })}
         <Box sx={{ flex: 1 }} />
         <Button
           variant="text"
+          onClick={handleClear}
           sx={{
             color: "#4A5C92",
             fontWeight: 500,
@@ -188,127 +249,154 @@ export default function EmailList() {
           bgcolor: "#FAF8FF",
         }}
       >
-        {emails.map((email) => (
-          <Box key={email.id}>
-            <Box
-              sx={{
-                display: "flex",
-                gap: 2,
-                pl: 2,
-                pr: 3,
-                py: 1.5,
-                cursor: "pointer",
-                "&:hover": { bgcolor: "rgba(0,0,0,0.04)" },
-                transition: "background-color 0.15s",
-              }}
-            >
-              {/* Avatar */}
-              <Avatar
-                sx={{
-                  width: 56,
-                  height: 56,
-                  bgcolor: email.avatarColor,
-                  fontSize: 16,
-                  fontWeight: 500,
-                  flexShrink: 0,
-                }}
-              >
-                {email.avatarInitials}
-              </Avatar>
+        {loading ? (
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              height: "100%",
+            }}
+          >
+            <CircularProgress sx={{ color: "#4A5C92" }} />
+          </Box>
+        ) : emails.length === 0 ? (
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              height: "100%",
+            }}
+          >
+            <Typography sx={{ fontSize: 14, color: "#757680" }}>
+              No emails found
+            </Typography>
+          </Box>
+        ) : (
+          emails.map((email) => {
+            const senderName = email.from?.name || email.from?.address || "Unknown";
+            const color = getAvatarColor(senderName);
+            const initials = getInitials(senderName);
+            const isSelected = selectedUid === email.uid;
 
-              {/* Content */}
-              <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
-                <Typography
+            return (
+              <Box key={email.uid}>
+                <Box
+                  onClick={() => onSelectEmail(email)}
                   sx={{
-                    fontSize: 12,
-                    fontWeight: 500,
-                    lineHeight: "16px",
-                    letterSpacing: 0.5,
-                    color: "#49454F",
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
+                    display: "flex",
+                    gap: 2,
+                    pl: 2,
+                    pr: 3,
+                    py: 1.5,
+                    cursor: "pointer",
+                    bgcolor: isSelected
+                      ? "rgba(74,92,146,0.08)"
+                      : "transparent",
+                    "&:hover": { bgcolor: "rgba(0,0,0,0.04)" },
+                    transition: "background-color 0.15s",
                   }}
                 >
-                  {email.subject}
-                </Typography>
-                <Typography
-                  sx={{
-                    fontSize: 16,
-                    fontWeight: 400,
-                    lineHeight: "24px",
-                    letterSpacing: 0.5,
-                    color: "#1A1B21",
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
-                  {email.sender}
-                </Typography>
-                <Typography
-                  sx={{
-                    fontSize: 14,
-                    fontWeight: 400,
-                    lineHeight: "20px",
-                    letterSpacing: 0.25,
-                    color: "#49454F",
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
-                  {email.preview}
-                </Typography>
-              </Box>
-
-              {/* Trailing */}
-              <Box
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 1.25,
-                  flexShrink: 0,
-                }}
-              >
-                <Typography
-                  sx={{
-                    fontSize: 11,
-                    fontWeight: 500,
-                    lineHeight: "16px",
-                    letterSpacing: 0.5,
-                    color: "#49454F",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {email.date}
-                </Typography>
-                {email.badgeCount && (
-                  <Box
+                  {/* Avatar */}
+                  <Avatar
                     sx={{
-                      bgcolor: "#BA1A1A",
-                      color: "#FFF",
-                      borderRadius: "100px",
-                      minWidth: 16,
-                      height: 16,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      px: 0.5,
-                      fontSize: 11,
+                      width: 56,
+                      height: 56,
+                      bgcolor: color,
+                      fontSize: 16,
                       fontWeight: 500,
-                      lineHeight: "16px",
-                      letterSpacing: 0.5,
+                      flexShrink: 0,
                     }}
                   >
-                    {email.badgeCount}
+                    {initials}
+                  </Avatar>
+
+                  {/* Content */}
+                  <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+                    <Typography
+                      sx={{
+                        fontSize: 12,
+                        fontWeight: 500,
+                        lineHeight: "16px",
+                        letterSpacing: 0.5,
+                        color: "#49454F",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {email.subject || "(no subject)"}
+                    </Typography>
+                    <Typography
+                      sx={{
+                        fontSize: 16,
+                        fontWeight: email.isRead ? 400 : 600,
+                        lineHeight: "24px",
+                        letterSpacing: 0.5,
+                        color: "#1A1B21",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {senderName}
+                    </Typography>
+                    <Typography
+                      sx={{
+                        fontSize: 14,
+                        fontWeight: 400,
+                        lineHeight: "20px",
+                        letterSpacing: 0.25,
+                        color: "#49454F",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {email.snippet || email.text?.slice(0, 80) || ""}
+                    </Typography>
                   </Box>
-                )}
+
+                  {/* Trailing */}
+                  <Box
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 1.25,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Typography
+                      sx={{
+                        fontSize: 11,
+                        fontWeight: 500,
+                        lineHeight: "16px",
+                        letterSpacing: 0.5,
+                        color: "#49454F",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {formatDate(email.date)}
+                    </Typography>
+                    {!email.isRead && (
+                      <Box
+                        sx={{
+                          bgcolor: "#BA1A1A",
+                          borderRadius: "100px",
+                          width: 10,
+                          height: 10,
+                          flexShrink: 0,
+                        }}
+                      />
+                    )}
+                  </Box>
+                </Box>
+                <Divider sx={{ borderColor: "#CAC4D0" }} />
               </Box>
-            </Box>
-            <Divider sx={{ borderColor: "#CAC4D0" }} />
-          </Box>
-        ))}
+            );
+          })
+        )}
       </Box>
     </Box>
   );

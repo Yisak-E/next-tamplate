@@ -1,22 +1,70 @@
 "use client";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
 import TextField from "@mui/material/TextField";
 import InputAdornment from "@mui/material/InputAdornment";
+import CircularProgress from "@mui/material/CircularProgress";
 import SearchIcon from "@mui/icons-material/Search";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
 import MenuIcon from "@mui/icons-material/Menu";
 import CancelOutlined from "@mui/icons-material/CancelOutlined";
+import LogoutIcon from "@mui/icons-material/Logout";
+import Tooltip from "@mui/material/Tooltip";
 import NavigationRail from "./components/NavigationRail";
 import EmailList from "./components/EmailList";
+import EmailDetail from "./components/EmailDetail";
+import ComposeDialog from "./components/ComposeDialog";
 import CalendarView from "./components/CalendarView";
 import ContactsView from "./components/ContactsView";
-import type { ViewType } from "./types";
+import LoginPage from "./components/LoginPage";
+import { useAuth } from "./context/AuthContext";
+import type { ViewType, EmailFolder } from "./types";
+import type { MailboxEmail } from "./lib/api";
 
 export default function Home() {
+  const { user, token, loading, logout } = useAuth();
   const [activeView, setActiveView] = useState<ViewType>("email");
+  const [activeFolder, setActiveFolder] = useState<EmailFolder>("inbox");
+  const [selectedEmail, setSelectedEmail] = useState<MailboxEmail | null>(null);
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [emailListKey, setEmailListKey] = useState(0);
+
+  const handleSelectEmail = useCallback((email: MailboxEmail) => {
+    setSelectedEmail(email);
+  }, []);
+
+  const handleRefreshList = useCallback(() => {
+    setSelectedEmail(null);
+    setEmailListKey((k) => k + 1);
+  }, []);
+
+  const handleCompose = useCallback(() => {
+    setComposeOpen(true);
+  }, []);
+
+  // Show loading spinner while checking auth
+  if (loading) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: "100vh",
+          bgcolor: "#FAF8FF",
+        }}
+      >
+        <CircularProgress sx={{ color: "#4A5C92" }} />
+      </Box>
+    );
+  }
+
+  // Show login page if not authenticated
+  if (!user || !token) {
+    return <LoginPage />;
+  }
 
   return (
     <Box
@@ -29,7 +77,15 @@ export default function Home() {
       }}
     >
       {/* Navigation Rail */}
-      <NavigationRail activeView={activeView} onViewChange={setActiveView} />
+      <NavigationRail
+        activeView={activeView}
+        onViewChange={(view) => {
+          setActiveView(view);
+          setSelectedEmail(null);
+        }}
+        onCompose={handleCompose}
+        user={user}
+      />
 
       {/* Main Content */}
       <Box
@@ -79,7 +135,8 @@ export default function Home() {
             <TextField
               variant="outlined"
               size="small"
-              defaultValue="(Sam Jones) sam.jones@..."
+              value={`(${user.username}) ${user.email}`}
+              slotProps={{ input: { readOnly: true } }}
               sx={{
                 flex: 1,
                 "& .MuiOutlinedInput-root": {
@@ -96,18 +153,12 @@ export default function Home() {
                   },
                 },
               }}
-              slotProps={{
-                input: {
-                  endAdornment: (
-                    <InputAdornment position="end">
-                      <IconButton size="small" sx={{ color: "#49454F" }}>
-                        <CancelOutlined />
-                      </IconButton>
-                    </InputAdornment>
-                  ),
-                },
-              }}
             />
+            <Tooltip title="Sign out">
+              <IconButton size="small" onClick={logout} sx={{ color: "#49454F" }}>
+                <LogoutIcon />
+              </IconButton>
+            </Tooltip>
           </Box>
 
           {/* Search Bar (centered) */}
@@ -172,21 +223,47 @@ export default function Home() {
         >
           {activeView === "email" && (
             <>
-              <EmailList />
-              <Box
-                sx={{
-                  flex: 1,
-                  bgcolor: "#FFFFFF",
-                  borderRadius: "16px",
-                  minWidth: 0,
-                }}
+              <EmailList
+                key={emailListKey}
+                folder={activeFolder}
+                onSelectEmail={handleSelectEmail}
+                selectedUid={selectedEmail?.uid}
               />
+              {selectedEmail ? (
+                <EmailDetail
+                  email={selectedEmail}
+                  onRefreshList={handleRefreshList}
+                />
+              ) : (
+                <Box
+                  sx={{
+                    flex: 1,
+                    bgcolor: "#FFFFFF",
+                    borderRadius: "16px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minWidth: 0,
+                  }}
+                >
+                  <Typography sx={{ fontSize: 14, color: "#757680" }}>
+                    Select an email to read
+                  </Typography>
+                </Box>
+              )}
             </>
           )}
           {activeView === "calendar" && <CalendarView />}
           {activeView === "contacts" && <ContactsView />}
         </Box>
       </Box>
+
+      {/* Compose Email Dialog */}
+      <ComposeDialog
+        open={composeOpen}
+        onClose={() => setComposeOpen(false)}
+        onSent={handleRefreshList}
+      />
     </Box>
   );
 }

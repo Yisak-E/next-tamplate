@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import Avatar from "@mui/material/Avatar";
@@ -9,6 +9,7 @@ import Divider from "@mui/material/Divider";
 import TextField from "@mui/material/TextField";
 import InputAdornment from "@mui/material/InputAdornment";
 import Tooltip from "@mui/material/Tooltip";
+import CircularProgress from "@mui/material/CircularProgress";
 import AddIcon from "@mui/icons-material/Add";
 import EditOutlined from "@mui/icons-material/EditOutlined";
 import DeleteOutline from "@mui/icons-material/DeleteOutline";
@@ -17,6 +18,12 @@ import EmailOutlined from "@mui/icons-material/EmailOutlined";
 import PhoneOutlined from "@mui/icons-material/PhoneOutlined";
 import BusinessOutlined from "@mui/icons-material/BusinessOutlined";
 import type { Contact } from "../types";
+import { useAuth } from "../context/AuthContext";
+import {
+  contactsApi,
+  type ApiContact,
+  type CreateContactDto,
+} from "../lib/api";
 import ContactDialog from "./ContactDialog";
 import ConfirmDialog from "./ConfirmDialog";
 
@@ -25,95 +32,65 @@ const AVATAR_COLORS = [
   "#7B6BA8", "#AD6B6B", "#6B8EAD",
 ];
 
-const initialContacts: Contact[] = [
-  {
-    id: "1",
-    firstName: "Jack",
-    lastName: "Smith",
-    email: "jack.smith@company.com",
-    phone: "+1 (555) 123-4567",
-    company: "Acme Corp",
-    avatarColor: "#7B6BA8",
-  },
-  {
-    id: "2",
-    firstName: "Sarah",
-    lastName: "Pruett",
-    email: "sarah.pruett@design.io",
-    phone: "+1 (555) 234-5678",
-    company: "Design.io",
-    avatarColor: "#5C8A5C",
-  },
-  {
-    id: "3",
-    firstName: "Jasmine",
-    lastName: "Fields",
-    email: "jasmine.fields@tech.co",
-    phone: "+1 (555) 345-6789",
-    company: "TechCo",
-    avatarColor: "#C4A265",
-  },
-  {
-    id: "4",
-    firstName: "Dan",
-    lastName: "Trovalds",
-    email: "dan.trovalds@startup.dev",
-    phone: "+1 (555) 456-7890",
-    company: "StartupDev",
-    avatarColor: "#6B8EAD",
-  },
-  {
-    id: "5",
-    firstName: "Christine",
-    lastName: "Woods",
-    email: "christine.woods@agency.net",
-    phone: "+1 (555) 567-8901",
-    company: "Creative Agency",
-    avatarColor: "#AD6B6B",
-  },
-  {
-    id: "6",
-    firstName: "Michael",
-    lastName: "Chen",
-    email: "michael.chen@firm.com",
-    phone: "+1 (555) 678-9012",
-    company: "Chen & Associates",
-    avatarColor: "#4A5C92",
-  },
-];
+function getAvatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
+function apiToContact(ac: ApiContact): Contact {
+  return {
+    id: ac._id,
+    name: ac.name,
+    email: ac.email,
+    phone: ac.phone || "",
+    company: ac.company || "",
+    avatarColor: getAvatarColor(ac.name),
+    notes: ac.notes,
+    isFavorite: ac.isFavorite,
+    tags: ac.tags,
+  };
+}
 
 export default function ContactsView() {
-  const [contacts, setContacts] = useState<Contact[]>(initialContacts);
+  const { token } = useAuth();
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedContact, setSelectedContact] = useState<Contact | null>(
-    initialContacts[0]
-  );
+  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingContact, setEditingContact] = useState<Contact | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingContact, setDeletingContact] = useState<Contact | null>(null);
 
-  const filteredContacts = useMemo(() => {
-    if (!searchQuery.trim()) return contacts;
-    const q = searchQuery.toLowerCase();
-    return contacts.filter(
-      (c) =>
-        c.firstName.toLowerCase().includes(q) ||
-        c.lastName.toLowerCase().includes(q) ||
-        c.email.toLowerCase().includes(q) ||
-        c.company.toLowerCase().includes(q) ||
-        c.phone.includes(q)
-    );
-  }, [contacts, searchQuery]);
+  const fetchContacts = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const result = await contactsApi.list(token, {
+        q: searchQuery || undefined,
+        limit: 100,
+      });
+      const mapped = result.contacts.map(apiToContact);
+      setContacts(mapped);
+      setTotal(result.total);
+    } catch (err) {
+      console.error("Failed to fetch contacts:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [token, searchQuery]);
+
+  useEffect(() => {
+    fetchContacts();
+  }, [fetchContacts]);
 
   const sortedContacts = useMemo(
-    () =>
-      [...filteredContacts].sort((a, b) =>
-        `${a.firstName} ${a.lastName}`.localeCompare(
-          `${b.firstName} ${b.lastName}`
-        )
-      ),
-    [filteredContacts]
+    () => [...contacts].sort((a, b) => a.name.localeCompare(b.name)),
+    [contacts]
   );
 
   const handleCreate = () => {
@@ -131,44 +108,65 @@ export default function ContactsView() {
     setDeleteDialogOpen(true);
   };
 
-  const handleDeleteConfirm = () => {
-    if (deletingContact) {
-      setContacts((prev) => prev.filter((c) => c.id !== deletingContact.id));
+  const handleDeleteConfirm = async () => {
+    if (!token || !deletingContact) return;
+    try {
+      await contactsApi.delete(token, deletingContact.id);
       if (selectedContact?.id === deletingContact.id) {
         setSelectedContact(null);
       }
       setDeletingContact(null);
+      setDeleteDialogOpen(false);
+      fetchContacts();
+    } catch (err) {
+      console.error("Failed to delete contact:", err);
+      setDeleteDialogOpen(false);
     }
-    setDeleteDialogOpen(false);
   };
 
-  const handleSave = (data: Omit<Contact, "id" | "avatarColor">) => {
-    if (editingContact) {
-      // Update
-      const updated = { ...editingContact, ...data };
-      setContacts((prev) =>
-        prev.map((c) => (c.id === editingContact.id ? updated : c))
-      );
-      if (selectedContact?.id === editingContact.id) {
-        setSelectedContact(updated);
-      }
-    } else {
-      // Create
-      const newContact: Contact = {
-        ...data,
-        id: Date.now().toString(),
-        avatarColor:
-          AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
+  const handleSave = async (data: {
+    name: string;
+    email: string;
+    phone: string;
+    company: string;
+  }) => {
+    if (!token) return;
+    try {
+      const dto: CreateContactDto = {
+        name: data.name,
+        email: data.email,
+        phone: data.phone || undefined,
+        company: data.company || undefined,
       };
-      setContacts((prev) => [...prev, newContact]);
-      setSelectedContact(newContact);
+      if (editingContact) {
+        const updated = await contactsApi.update(
+          token,
+          editingContact.id,
+          dto
+        );
+        const mapped = apiToContact(updated);
+        if (selectedContact?.id === editingContact.id) {
+          setSelectedContact(mapped);
+        }
+      } else {
+        const created = await contactsApi.create(token, dto);
+        const mapped = apiToContact(created);
+        setSelectedContact(mapped);
+      }
+      setDialogOpen(false);
+      setEditingContact(null);
+      fetchContacts();
+    } catch (err) {
+      console.error("Failed to save contact:", err);
     }
-    setDialogOpen(false);
-    setEditingContact(null);
   };
 
-  const getInitials = (c: Contact) =>
-    `${c.firstName[0]}${c.lastName[0]}`.toUpperCase();
+  const getInitials = (c: Contact) => {
+    const parts = c.name.trim().split(/\s+/);
+    if (parts.length >= 2)
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    return c.name.slice(0, 2).toUpperCase();
+  };
 
   return (
     <Box sx={{ display: "flex", gap: "15px", flex: 1, overflow: "hidden" }}>
@@ -194,7 +192,7 @@ export default function ContactsView() {
           <Typography
             sx={{ fontSize: 18, fontWeight: 500, color: "#1A1B21" }}
           >
-            Contacts ({contacts.length})
+            Contacts ({total})
           </Typography>
           <Button
             variant="contained"
@@ -240,7 +238,18 @@ export default function ContactsView() {
 
         {/* List */}
         <Box sx={{ flex: 1, overflow: "auto" }}>
-          {sortedContacts.length === 0 ? (
+          {loading ? (
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                height: "100%",
+              }}
+            >
+              <CircularProgress sx={{ color: "#4A5C92" }} />
+            </Box>
+          ) : sortedContacts.length === 0 ? (
             <Box
               sx={{
                 display: "flex",
@@ -297,7 +306,7 @@ export default function ContactsView() {
                         textOverflow: "ellipsis",
                       }}
                     >
-                      {contact.firstName} {contact.lastName}
+                      {contact.name}
                     </Typography>
                     <Typography
                       sx={{
@@ -357,7 +366,7 @@ export default function ContactsView() {
                 <Typography
                   sx={{ fontSize: 22, fontWeight: 500, color: "#1A1B21" }}
                 >
-                  {selectedContact.firstName} {selectedContact.lastName}
+                  {selectedContact.name}
                 </Typography>
                 <Typography sx={{ fontSize: 14, color: "#49454F" }}>
                   {selectedContact.company}
@@ -411,7 +420,7 @@ export default function ContactsView() {
                     Phone
                   </Typography>
                   <Typography sx={{ fontSize: 14, color: "#1A1B21" }}>
-                    {selectedContact.phone}
+                    {selectedContact.phone || "—"}
                   </Typography>
                 </Box>
               </Box>
@@ -423,7 +432,7 @@ export default function ContactsView() {
                     Company
                   </Typography>
                   <Typography sx={{ fontSize: 14, color: "#1A1B21" }}>
-                    {selectedContact.company}
+                    {selectedContact.company || "—"}
                   </Typography>
                 </Box>
               </Box>
@@ -460,7 +469,7 @@ export default function ContactsView() {
       <ConfirmDialog
         open={deleteDialogOpen}
         title="Delete Contact"
-        message={`Are you sure you want to delete ${deletingContact?.firstName} ${deletingContact?.lastName}?`}
+        message={`Are you sure you want to delete ${deletingContact?.name}?`}
         onConfirm={handleDeleteConfirm}
         onCancel={() => {
           setDeleteDialogOpen(false);

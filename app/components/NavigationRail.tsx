@@ -14,6 +14,7 @@ import LightModeOutlined from "@mui/icons-material/LightModeOutlined";
 import PaletteOutlined from "@mui/icons-material/PaletteOutlined";
 import SettingsOutlined from "@mui/icons-material/SettingsOutlined";
 import type { ViewType } from "../types";
+import type { AuthUser } from "../lib/api";
 
 interface NavItem {
   icon: React.ReactNode;
@@ -30,9 +31,25 @@ const navItems: NavItem[] = [
 interface NavigationRailProps {
   activeView: ViewType;
   onViewChange: (view: ViewType) => void;
+  onCompose?: () => void;
+  user?: AuthUser | null;
 }
 
-export default function NavigationRail({ activeView, onViewChange }: NavigationRailProps) {
+export default function NavigationRail({
+  activeView,
+  onViewChange,
+  onCompose,
+  user,
+}: NavigationRailProps) {
+  const initials = user
+    ? user.username
+        .split(/\s+/)
+        .map((w) => w[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2)
+    : "??";
+
   return (
     <Box
       sx={{
@@ -48,6 +65,7 @@ export default function NavigationRail({ activeView, onViewChange }: NavigationR
       {/* FAB */}
       <Fab
         size="medium"
+        onClick={onCompose}
         sx={{
           bgcolor: "#FFD6F8",
           color: "#000",
@@ -158,7 +176,6 @@ export default function NavigationRail({ activeView, onViewChange }: NavigationR
           <SettingsOutlined fontSize="small" />
         </IconButton>
         <Avatar
-          src="/avatar.jpg"
           sx={{
             width: 56,
             height: 56,
@@ -167,7 +184,7 @@ export default function NavigationRail({ activeView, onViewChange }: NavigationR
             color: "#324478",
           }}
         >
-          SJ
+          {initials}
         </Avatar>
       </Box>
     </Box>

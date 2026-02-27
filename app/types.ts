@@ -1,6 +1,15 @@
 export type ViewType = "email" | "calendar" | "contacts";
 
-// Calendar types
+// Email folder type
+export type EmailFolder =
+  | "inbox"
+  | "sent"
+  | "drafts"
+  | "trash"
+  | "spam"
+  | "starred";
+
+// Calendar types (local-only, no API)
 export interface CalendarEvent {
   id: string;
   title: string;
@@ -11,13 +20,15 @@ export interface CalendarEvent {
   color: string;
 }
 
-// Contact types
+// Contact types — mapped from ApiContact for UI display
 export interface Contact {
   id: string;
-  firstName: string;
-  lastName: string;
+  name: string;
   email: string;
   phone: string;
   company: string;
   avatarColor: string;
+  notes?: string;
+  isFavorite?: boolean;
+  tags?: string[];
 }
