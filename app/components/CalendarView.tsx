@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import IconButton from "@mui/material/IconButton";
@@ -7,6 +7,7 @@ import Button from "@mui/material/Button";
 import Divider from "@mui/material/Divider";
 import Chip from "@mui/material/Chip";
 import Tooltip from "@mui/material/Tooltip";
+import CircularProgress from "@mui/material/CircularProgress";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import AddIcon from "@mui/icons-material/Add";
@@ -14,58 +15,24 @@ import EditOutlined from "@mui/icons-material/EditOutlined";
 import DeleteOutline from "@mui/icons-material/DeleteOutline";
 import AccessTimeIcon from "@mui/icons-material/AccessTime";
 import type { CalendarEvent } from "../types";
+import { calendarApi, type ApiCalendarEvent } from "../lib/api";
+import { useAuth } from "../context/AuthContext";
 import EventDialog from "./EventDialog";
 import ConfirmDialog from "./ConfirmDialog";
 
 const COLORS = ["#4A5C92", "#BA1A1A", "#5C8A5C", "#C4A265", "#7B6BA8", "#AD6B6B", "#6B8EAD"];
 
-const initialEvents: CalendarEvent[] = [
-  {
-    id: "1",
-    title: "Team Standup",
-    description: "Daily standup meeting with the dev team",
-    date: "2026-02-27",
-    startTime: "09:00",
-    endTime: "09:30",
-    color: "#4A5C92",
-  },
-  {
-    id: "2",
-    title: "Client Call - Project Review",
-    description: "Review project milestones with client",
-    date: "2026-02-27",
-    startTime: "11:00",
-    endTime: "12:00",
-    color: "#5C8A5C",
-  },
-  {
-    id: "3",
-    title: "Lunch with Sarah",
-    description: "Discuss the new proposal over lunch",
-    date: "2026-02-27",
-    startTime: "13:00",
-    endTime: "14:00",
-    color: "#C4A265",
-  },
-  {
-    id: "4",
-    title: "Sprint Planning",
-    description: "Plan next sprint tasks and assignments",
-    date: "2026-03-02",
-    startTime: "10:00",
-    endTime: "11:30",
-    color: "#7B6BA8",
-  },
-  {
-    id: "5",
-    title: "Design Review",
-    description: "Review UI/UX designs for the new feature",
-    date: "2026-03-05",
-    startTime: "14:00",
-    endTime: "15:00",
-    color: "#AD6B6B",
-  },
-];
+function apiToEvent(e: ApiCalendarEvent): CalendarEvent {
+  return {
+    id: e._id,
+    title: e.title,
+    description: e.description ?? "",
+    date: e.date,
+    startTime: e.startTime,
+    endTime: e.endTime,
+    color: e.color ?? "#4A5C92",
+  };
+}
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = [
@@ -86,14 +53,42 @@ function formatDate(year: number, month: number, day: number): string {
 }
 
 export default function CalendarView() {
-  const [events, setEvents] = useState<CalendarEvent[]>(initialEvents);
-  const [currentYear, setCurrentYear] = useState(2026);
-  const [currentMonth, setCurrentMonth] = useState(1); // February (0-indexed)
-  const [selectedDate, setSelectedDate] = useState<string>("2026-02-27");
+  const { token } = useAuth();
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const today = new Date();
+  const todayStr = formatDate(today.getFullYear(), today.getMonth(), today.getDate());
+
+  const [currentYear, setCurrentYear] = useState(today.getFullYear());
+  const [currentMonth, setCurrentMonth] = useState(today.getMonth());
+  const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingEvent, setDeletingEvent] = useState<CalendarEvent | null>(null);
+
+  // Fetch events for the current month from the API
+  const fetchEvents = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    try {
+      const res = await calendarApi.list(token, {
+        month: currentMonth + 1, // API expects 1-12
+        year: currentYear,
+        limit: 200,
+      });
+      setEvents(res.data.map(apiToEvent));
+    } catch (err) {
+      console.error("Failed to fetch calendar events", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [token, currentMonth, currentYear]);
+
+  useEffect(() => {
+    fetchEvents();
+  }, [fetchEvents]);
 
   const daysInMonth = getDaysInMonth(currentYear, currentMonth);
   const firstDay = getFirstDayOfMonth(currentYear, currentMonth);
@@ -117,9 +112,9 @@ export default function CalendarView() {
   };
 
   const goToToday = () => {
-    setCurrentYear(2026);
-    setCurrentMonth(1);
-    setSelectedDate("2026-02-27");
+    setCurrentYear(today.getFullYear());
+    setCurrentMonth(today.getMonth());
+    setSelectedDate(todayStr);
   };
 
   const eventsForDate = useCallback(
@@ -144,27 +139,47 @@ export default function CalendarView() {
     setDeleteDialogOpen(true);
   };
 
-  const handleDeleteConfirm = () => {
-    if (deletingEvent) {
-      setEvents((prev) => prev.filter((e) => e.id !== deletingEvent.id));
+  const handleDeleteConfirm = async () => {
+    if (deletingEvent && token) {
+      try {
+        await calendarApi.delete(token, deletingEvent.id);
+        setEvents((prev) => prev.filter((e) => e.id !== deletingEvent.id));
+      } catch (err) {
+        console.error("Failed to delete event", err);
+      }
       setDeletingEvent(null);
     }
     setDeleteDialogOpen(false);
   };
 
-  const handleSaveEvent = (eventData: Omit<CalendarEvent, "id">) => {
-    if (editingEvent) {
-      // Update
-      setEvents((prev) =>
-        prev.map((e) => (e.id === editingEvent.id ? { ...e, ...eventData } : e))
-      );
-    } else {
-      // Create
-      const newEvent: CalendarEvent = {
-        ...eventData,
-        id: Date.now().toString(),
-      };
-      setEvents((prev) => [...prev, newEvent]);
+  const handleSaveEvent = async (eventData: Omit<CalendarEvent, "id">) => {
+    if (!token) return;
+    try {
+      if (editingEvent) {
+        const updated = await calendarApi.update(token, editingEvent.id, {
+          title: eventData.title,
+          description: eventData.description,
+          date: eventData.date,
+          startTime: eventData.startTime,
+          endTime: eventData.endTime,
+          color: eventData.color,
+        });
+        setEvents((prev) =>
+          prev.map((e) => (e.id === editingEvent.id ? apiToEvent(updated) : e))
+        );
+      } else {
+        const created = await calendarApi.create(token, {
+          title: eventData.title,
+          description: eventData.description,
+          date: eventData.date,
+          startTime: eventData.startTime,
+          endTime: eventData.endTime,
+          color: eventData.color,
+        });
+        setEvents((prev) => [...prev, apiToEvent(created)]);
+      }
+    } catch (err) {
+      console.error("Failed to save event", err);
     }
     setDialogOpen(false);
     setEditingEvent(null);
@@ -174,8 +189,6 @@ export default function CalendarView() {
   const calendarDays: (number | null)[] = [];
   for (let i = 0; i < firstDay; i++) calendarDays.push(null);
   for (let d = 1; d <= daysInMonth; d++) calendarDays.push(d);
-
-  const todayStr = "2026-02-27";
 
   return (
     <Box sx={{ display: "flex", gap: "15px", flex: 1, overflow: "hidden" }}>

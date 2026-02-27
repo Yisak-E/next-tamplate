@@ -9,14 +9,14 @@ export type EmailFolder =
   | "spam"
   | "starred";
 
-// Calendar types (local-only, no API)
+// Calendar types — mapped from ApiCalendarEvent for UI display
 export interface CalendarEvent {
   id: string;
   title: string;
   description: string;
-  date: string; // ISO date string
-  startTime: string; // HH:mm
-  endTime: string; // HH:mm
+  date: string; // "YYYY-MM-DD"
+  startTime: string; // "HH:mm"
+  endTime: string; // "HH:mm"
   color: string;
 }
 

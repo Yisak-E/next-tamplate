@@ -368,3 +368,92 @@ export const contactsApi = {
     return request<ApiContact>(`/contacts/${id}`, { method: "DELETE" }, token);
   },
 };
+
+// ─── Calendar types ──────────────────────────────────────────────────────────
+
+export interface ApiCalendarEvent {
+  _id: string;
+  userId: string;
+  title: string;
+  description: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  color: string;
+  isAllDay: boolean;
+  location: string;
+  reminders: number[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CalendarEventListResult {
+  data: ApiCalendarEvent[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface CreateCalendarEventDto {
+  title: string;
+  description?: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  color?: string;
+  isAllDay?: boolean;
+  location?: string;
+  reminders?: number[];
+}
+
+// ─── Calendar API ────────────────────────────────────────────────────────────
+
+export const calendarApi = {
+  list(
+    token: string,
+    params: {
+      from?: string;
+      to?: string;
+      month?: number;
+      year?: number;
+      q?: string;
+      page?: number;
+      limit?: number;
+    } = {}
+  ) {
+    const qs = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+    });
+    const q = qs.toString();
+    return request<CalendarEventListResult>(
+      `/calendar${q ? `?${q}` : ""}`,
+      {},
+      token
+    );
+  },
+
+  get(token: string, id: string) {
+    return request<ApiCalendarEvent>(`/calendar/${id}`, {}, token);
+  },
+
+  create(token: string, data: CreateCalendarEventDto) {
+    return request<ApiCalendarEvent>(
+      "/calendar",
+      { method: "POST", body: JSON.stringify(data) },
+      token
+    );
+  },
+
+  update(token: string, id: string, data: Partial<CreateCalendarEventDto>) {
+    return request<ApiCalendarEvent>(
+      `/calendar/${id}`,
+      { method: "PATCH", body: JSON.stringify(data) },
+      token
+    );
+  },
+
+  delete(token: string, id: string) {
+    return request<void>(`/calendar/${id}`, { method: "DELETE" }, token);
+  },
+};
