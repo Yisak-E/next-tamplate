@@ -195,23 +195,42 @@ export default function CalendarView() {
 
   const handleDeleteConfirm = async () => {
     if (deletingEvent && token) {
+      // Optimistic: remove from UI immediately
+      const removed = deletingEvent;
+      setEvents((prev) => prev.filter((e) => e.id !== removed.id));
+      setDeletingEvent(null);
+      setDeleteDialogOpen(false);
+
       try {
-        await calendarApi.delete(token, deletingEvent.id);
-        setEvents((prev) => prev.filter((e) => e.id !== deletingEvent.id));
+        await calendarApi.delete(token, removed.id);
         invalidateCalendarCache(currentYear, currentMonth);
       } catch (err) {
         console.error("Failed to delete event", err);
+        // Rollback
+        setEvents((prev) => [...prev, removed]);
       }
-      setDeletingEvent(null);
+    } else {
+      setDeleteDialogOpen(false);
     }
-    setDeleteDialogOpen(false);
   };
 
   const handleSaveEvent = async (eventData: Omit<CalendarEvent, "id">) => {
     if (!token) return;
-    try {
-      if (editingEvent) {
-        const updated = await calendarApi.update(token, editingEvent.id, {
+
+    // Close dialog immediately
+    setDialogOpen(false);
+
+    if (editingEvent) {
+      // Optimistic update
+      const optimistic: CalendarEvent = { ...editingEvent, ...eventData };
+      setEvents((prev) =>
+        prev.map((e) => (e.id === editingEvent.id ? optimistic : e))
+      );
+      const prevEvent = editingEvent;
+      setEditingEvent(null);
+
+      try {
+        const updated = await calendarApi.update(token, prevEvent.id, {
           title: eventData.title,
           description: eventData.description,
           date: eventData.date,
@@ -220,9 +239,24 @@ export default function CalendarView() {
           color: eventData.color,
         });
         setEvents((prev) =>
-          prev.map((e) => (e.id === editingEvent.id ? apiToEvent(updated) : e))
+          prev.map((e) => (e.id === prevEvent.id ? apiToEvent(updated) : e))
         );
-      } else {
+        invalidateCalendarCache(currentYear, currentMonth);
+      } catch (err) {
+        console.error("Failed to update event", err);
+        // Rollback
+        setEvents((prev) =>
+          prev.map((e) => (e.id === prevEvent.id ? prevEvent : e))
+        );
+      }
+    } else {
+      // Create: add a temporary placeholder, replace when API responds
+      const tempId = `temp_${Date.now()}`;
+      const optimistic: CalendarEvent = { id: tempId, ...eventData };
+      setEvents((prev) => [...prev, optimistic]);
+      setEditingEvent(null);
+
+      try {
         const created = await calendarApi.create(token, {
           title: eventData.title,
           description: eventData.description,
@@ -231,14 +265,16 @@ export default function CalendarView() {
           endTime: eventData.endTime,
           color: eventData.color,
         });
-        setEvents((prev) => [...prev, apiToEvent(created)]);
+        setEvents((prev) =>
+          prev.map((e) => (e.id === tempId ? apiToEvent(created) : e))
+        );
+        invalidateCalendarCache(currentYear, currentMonth);
+      } catch (err) {
+        console.error("Failed to create event", err);
+        // Rollback
+        setEvents((prev) => prev.filter((e) => e.id !== tempId));
       }
-      invalidateCalendarCache(currentYear, currentMonth);
-    } catch (err) {
-      console.error("Failed to save event", err);
     }
-    setDialogOpen(false);
-    setEditingEvent(null);
   };
 
   // Build calendar grid

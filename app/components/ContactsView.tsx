@@ -157,18 +157,25 @@ export default function ContactsView() {
 
   const handleDeleteConfirm = async () => {
     if (!token || !deletingContact) return;
+
+    // Optimistic: remove from UI immediately
+    const removedContact = deletingContact;
+    setContacts((prev) => prev.filter((c) => c.id !== removedContact.id));
+    setTotal((prev) => Math.max(0, prev - 1));
+    if (selectedContact?.id === removedContact.id) {
+      setSelectedContact(null);
+    }
+    setDeletingContact(null);
+    setDeleteDialogOpen(false);
+
     try {
-      await contactsApi.delete(token, deletingContact.id);
-      if (selectedContact?.id === deletingContact.id) {
-        setSelectedContact(null);
-      }
-      setDeletingContact(null);
-      setDeleteDialogOpen(false);
+      await contactsApi.delete(token, removedContact.id);
       invalidateContactsCache();
-      fetchContacts({ force: true });
     } catch (err) {
       console.error("Failed to delete contact:", err);
-      setDeleteDialogOpen(false);
+      // Rollback: re-add the contact
+      setContacts((prev) => [...prev, removedContact]);
+      setTotal((prev) => prev + 1);
     }
   };
 
@@ -179,34 +186,68 @@ export default function ContactsView() {
     company: string;
   }) => {
     if (!token) return;
-    try {
-      const dto: CreateContactDto = {
+
+    const dto: CreateContactDto = {
+      name: data.name,
+      email: data.email,
+      phone: data.phone || undefined,
+      company: data.company || undefined,
+    };
+
+    // Close dialog immediately for responsiveness
+    setDialogOpen(false);
+
+    if (editingContact) {
+      // Optimistic update
+      const optimistic: Contact = {
+        ...editingContact,
         name: data.name,
         email: data.email,
-        phone: data.phone || undefined,
-        company: data.company || undefined,
+        phone: data.phone,
+        company: data.company,
+        avatarColor: editingContact.avatarColor,
       };
-      if (editingContact) {
-        const updated = await contactsApi.update(
-          token,
-          editingContact.id,
-          dto
-        );
+      setContacts((prev) =>
+        prev.map((c) => (c.id === editingContact.id ? optimistic : c))
+      );
+      if (selectedContact?.id === editingContact.id) {
+        setSelectedContact(optimistic);
+      }
+      const prevContact = editingContact;
+      setEditingContact(null);
+
+      try {
+        const updated = await contactsApi.update(token, prevContact.id, dto);
         const mapped = apiToContact(updated);
-        if (selectedContact?.id === editingContact.id) {
+        setContacts((prev) =>
+          prev.map((c) => (c.id === prevContact.id ? mapped : c))
+        );
+        if (selectedContact?.id === prevContact.id) {
           setSelectedContact(mapped);
         }
-      } else {
+        invalidateContactsCache();
+      } catch (err) {
+        console.error("Failed to update contact:", err);
+        // Rollback
+        setContacts((prev) =>
+          prev.map((c) => (c.id === prevContact.id ? prevContact : c))
+        );
+        if (selectedContact?.id === prevContact.id) {
+          setSelectedContact(prevContact);
+        }
+      }
+    } else {
+      setEditingContact(null);
+      try {
         const created = await contactsApi.create(token, dto);
         const mapped = apiToContact(created);
+        setContacts((prev) => [...prev, mapped]);
+        setTotal((prev) => prev + 1);
         setSelectedContact(mapped);
+        invalidateContactsCache();
+      } catch (err) {
+        console.error("Failed to create contact:", err);
       }
-      setDialogOpen(false);
-      setEditingContact(null);
-      invalidateContactsCache();
-      fetchContacts({ force: true });
-    } catch (err) {
-      console.error("Failed to save contact:", err);
     }
   };
 

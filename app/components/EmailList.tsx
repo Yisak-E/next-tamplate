@@ -173,6 +173,7 @@ export default function EmailList({
 
   // ── Group selection state ──
   const [checkedUids, setCheckedUids] = useState<Set<number>>(new Set());
+  const [selectionMode, setSelectionMode] = useState(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Synchronously hydrate from cache whenever folder or filter changes
@@ -183,6 +184,7 @@ export default function EmailList({
   if (currentKey !== prevKey) {
     setPrevKey(currentKey);
     setCheckedUids(new Set());
+    setSelectionMode(false);
     const snap = folderCache.get(currentKey);
     if (snap) {
       setEmails(snap.emails);
@@ -260,9 +262,17 @@ export default function EmailList({
   const someChecked = checkedUids.size > 0 && !allChecked;
 
   const toggleAll = () => {
+    if (!selectionMode) {
+      // First click: enter selection mode (don't select all yet)
+      setSelectionMode(true);
+      return;
+    }
     if (allChecked) {
+      // Everything is checked → uncheck all and exit selection mode
       setCheckedUids(new Set());
+      setSelectionMode(false);
     } else {
+      // Some or none checked → select all
       setCheckedUids(new Set(emails.map((e) => e.uid)));
     }
   };
@@ -384,8 +394,8 @@ export default function EmailList({
           <ArrowDropDown sx={{ color: "#49454F" }} />
         </Box>
         <Checkbox
-          checked={allChecked}
-          indeterminate={someChecked}
+          checked={selectionMode && allChecked}
+          indeterminate={selectionMode && someChecked}
           onChange={toggleAll}
           sx={{
             color: "#45464F",
@@ -503,7 +513,7 @@ export default function EmailList({
                   sx={{
                     display: "flex",
                     gap: 2,
-                    pl: 1,
+                    pl: selectionMode ? 1 : 2,
                     pr: 3,
                     py: 1.5,
                     cursor: "pointer",
@@ -517,19 +527,21 @@ export default function EmailList({
                     alignItems: "center",
                   }}
                 >
-                  {/* Checkbox */}
-                  <Checkbox
-                    checked={isChecked}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={() => toggleCheck(email.uid)}
-                    size="small"
-                    sx={{
-                      color: "#757680",
-                      "&.Mui-checked": { color: "#4A5C92" },
-                      p: 0.5,
-                      flexShrink: 0,
-                    }}
-                  />
+                  {/* Checkbox – only visible in selection mode */}
+                  {selectionMode && (
+                    <Checkbox
+                      checked={isChecked}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => toggleCheck(email.uid)}
+                      size="small"
+                      sx={{
+                        color: "#757680",
+                        "&.Mui-checked": { color: "#4A5C92" },
+                        p: 0.5,
+                        flexShrink: 0,
+                      }}
+                    />
+                  )}
                   {/* Avatar */}
                   <Avatar
                     sx={{

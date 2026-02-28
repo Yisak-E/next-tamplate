@@ -143,21 +143,25 @@ export default function EmailDetail({ email, onRefreshList, onUpdateEmail, onRem
 
   const handleDelete = async () => {
     if (!token) return;
+    // Optimistic: remove from list immediately
+    onRemoveEmail?.(fullEmail.uid);
     try {
       await emailApi.deleteEmail(token, fullEmail.folder || "inbox", fullEmail.uid);
-      onRemoveEmail?.(fullEmail.uid);
     } catch {
-      // ignore
+      // If it fails, do a full refresh so the email reappears
+      onRefreshList();
     }
   };
 
   const handleArchive = async () => {
     if (!token) return;
+    // Optimistic: remove from list immediately
+    onRemoveEmail?.(fullEmail.uid);
     try {
       await emailApi.moveEmail(token, fullEmail.folder || "inbox", fullEmail.uid, "Archive");
-      onRemoveEmail?.(fullEmail.uid);
     } catch {
-      // ignore
+      // If it fails, do a full refresh so the email reappears
+      onRefreshList();
     }
   };
 
