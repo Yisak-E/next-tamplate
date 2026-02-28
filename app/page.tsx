@@ -13,7 +13,7 @@ import CancelOutlined from "@mui/icons-material/CancelOutlined";
 import LogoutIcon from "@mui/icons-material/Logout";
 import Tooltip from "@mui/material/Tooltip";
 import NavigationRail from "./components/NavigationRail";
-import EmailList from "./components/EmailList";
+import EmailList, { invalidateFolderCache } from "./components/EmailList";
 import EmailDetail from "./components/EmailDetail";
 import ComposeDialog from "./components/ComposeDialog";
 import CalendarView from "./components/CalendarView";
@@ -30,6 +30,7 @@ export default function Home() {
   const [selectedEmail, setSelectedEmail] = useState<MailboxEmail | null>(null);
   const [composeOpen, setComposeOpen] = useState(false);
   const [emailListKey, setEmailListKey] = useState(0);
+  // refresh key bumped when cache is invalidated – forces EmailList re-fetch
 
   const handleSelectEmail = useCallback((email: MailboxEmail) => {
     setSelectedEmail(email);
@@ -37,6 +38,7 @@ export default function Home() {
 
   const handleRefreshList = useCallback(() => {
     setSelectedEmail(null);
+    invalidateFolderCache(); // clear cached data so fresh emails are fetched
     setEmailListKey((k) => k + 1);
   }, []);
 
@@ -227,6 +229,10 @@ export default function Home() {
                 key={emailListKey}
                 folder={activeFolder}
                 onSelectEmail={handleSelectEmail}
+                onFolderChange={(f) => {
+                  setActiveFolder(f);
+                  setSelectedEmail(null);
+                }}
                 selectedUid={selectedEmail?.uid}
               />
               {selectedEmail ? (

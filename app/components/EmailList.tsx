@@ -9,10 +9,20 @@ import Checkbox from "@mui/material/Checkbox";
 import Avatar from "@mui/material/Avatar";
 import IconButton from "@mui/material/IconButton";
 import CircularProgress from "@mui/material/CircularProgress";
+import Menu from "@mui/material/Menu";
+import MenuItem from "@mui/material/MenuItem";
+import ListItemIcon from "@mui/material/ListItemIcon";
+import ListItemText from "@mui/material/ListItemText";
 import MenuIcon from "@mui/icons-material/Menu";
 import SyncOutlined from "@mui/icons-material/SyncOutlined";
 import ArrowDropDown from "@mui/icons-material/ArrowDropDown";
 import CheckIcon from "@mui/icons-material/Check";
+import InboxIcon from "@mui/icons-material/InboxOutlined";
+import SendIcon from "@mui/icons-material/SendOutlined";
+import DraftsIcon from "@mui/icons-material/DraftsOutlined";
+import DeleteIcon from "@mui/icons-material/DeleteOutlined";
+import ReportIcon from "@mui/icons-material/ReportOutlined";
+import StarIcon from "@mui/icons-material/StarOutlined";
 import { useAuth } from "../context/AuthContext";
 import {
   emailApi,
@@ -58,9 +68,19 @@ function formatDate(dateStr: string): string {
   });
 }
 
+const FOLDER_ITEMS: { key: EmailFolder; label: string; icon: React.ReactNode }[] = [
+  { key: "inbox",   label: "Inbox",    icon: <InboxIcon fontSize="small" /> },
+  { key: "sent",    label: "Sent",     icon: <SendIcon fontSize="small" /> },
+  { key: "drafts",  label: "Drafts",   icon: <DraftsIcon fontSize="small" /> },
+  { key: "trash",   label: "Trash",    icon: <DeleteIcon fontSize="small" /> },
+  { key: "spam",    label: "Spam",     icon: <ReportIcon fontSize="small" /> },
+  { key: "starred", label: "Starred",  icon: <StarIcon fontSize="small" /> },
+];
+
 interface EmailListProps {
   folder: EmailFolder;
   onSelectEmail: (email: MailboxEmail) => void;
+  onFolderChange?: (folder: EmailFolder) => void;
   selectedUid?: number;
 }
 
@@ -83,9 +103,33 @@ const FOLDER_LABELS: Record<EmailFolder, string> = {
   starred: "Starred",
 };
 
+// ── Module-level cache so data survives re-renders / remounts ──
+interface CachedFolder {
+  emails: MailboxEmail[];
+  total: number;
+  ts: number; // timestamp of last fetch
+}
+const folderCache = new Map<string, CachedFolder>();
+const CACHE_TTL = 5 * 60 * 1000; // 5 min – background refresh after this
+
+function cacheKey(folder: string, filter: string) {
+  return `${folder}::${filter}`;
+}
+
+export function invalidateFolderCache(folder?: EmailFolder) {
+  if (folder) {
+    for (const k of folderCache.keys()) {
+      if (k.startsWith(`${folder}::`)) folderCache.delete(k);
+    }
+  } else {
+    folderCache.clear();
+  }
+}
+
 export default function EmailList({
   folder,
   onSelectEmail,
+  onFolderChange,
   selectedUid,
 }: EmailListProps) {
   const { token } = useAuth();
@@ -93,29 +137,55 @@ export default function EmailList({
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [activeFilter, setActiveFilter] = useState("All");
+  const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
 
-  const fetchEmails = useCallback(async () => {
-    if (!token) return;
-    setLoading(true);
-    try {
-      const params: FetchEmailsParams = { limit: 50 };
-      if (activeFilter === "Read") params.flag = "seen";
-      else if (activeFilter === "Unread") params.flag = "unseen";
-      else if (activeFilter === "Today") {
-        params.since = new Date().toISOString().split("T")[0];
+  const fetchEmails = useCallback(
+    async (opts?: { force?: boolean }) => {
+      if (!token) return;
+
+      const key = cacheKey(folder, activeFilter);
+      const cached = folderCache.get(key);
+      const isStale = !cached || Date.now() - cached.ts > CACHE_TTL;
+
+      // Show cached data immediately (no spinner)
+      if (cached && !opts?.force) {
+        setEmails(cached.emails);
+        setTotal(cached.total);
+        // If cache is fresh, skip network entirely
+        if (!isStale) return;
       }
 
-      const fetcher =
-        emailApi[folder as keyof typeof emailApi] as typeof emailApi.inbox;
-      const result = await fetcher(token, params);
-      setEmails(result.emails);
-      setTotal(result.total);
-    } catch (err) {
-      console.error("Failed to fetch emails:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, [token, folder, activeFilter]);
+      // Only show spinner when there's nothing cached to display
+      if (!cached) setLoading(true);
+
+      try {
+        const params: FetchEmailsParams = { limit: 50 };
+        if (activeFilter === "Read") params.flag = "seen";
+        else if (activeFilter === "Unread") params.flag = "unseen";
+        else if (activeFilter === "Today") {
+          params.since = new Date().toISOString().split("T")[0];
+        }
+
+        const fetcher =
+          emailApi[folder as keyof typeof emailApi] as typeof emailApi.inbox;
+        const result = await fetcher(token, params);
+
+        folderCache.set(key, {
+          emails: result.emails,
+          total: result.total,
+          ts: Date.now(),
+        });
+
+        setEmails(result.emails);
+        setTotal(result.total);
+      } catch (err) {
+        console.error("Failed to fetch emails:", err);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [token, folder, activeFilter]
+  );
 
   useEffect(() => {
     fetchEmails();
@@ -152,11 +222,52 @@ export default function EmailList({
           px: 0,
         }}
       >
-        <IconButton size="small" sx={{ color: "#1A1B21" }}>
+        <IconButton
+          size="small"
+          sx={{ color: "#1A1B21" }}
+          onClick={(e) => setMenuAnchor(e.currentTarget)}
+        >
           <MenuIcon />
         </IconButton>
+        <Menu
+          anchorEl={menuAnchor}
+          open={Boolean(menuAnchor)}
+          onClose={() => setMenuAnchor(null)}
+          slotProps={{ paper: { sx: { minWidth: 180, borderRadius: "12px", mt: 0.5 } } }}
+        >
+          {FOLDER_ITEMS.map((item) => (
+            <MenuItem
+              key={item.key}
+              selected={item.key === folder}
+              onClick={() => {
+                onFolderChange?.(item.key);
+                setMenuAnchor(null);
+              }}
+              sx={{
+                gap: 1,
+                borderRadius: "8px",
+                mx: 0.5,
+                "&.Mui-selected": { bgcolor: "rgba(74,92,146,0.10)" },
+              }}
+            >
+              <ListItemIcon sx={{ minWidth: 32, color: item.key === folder ? "#4A5C92" : "#49454F" }}>
+                {item.icon}
+              </ListItemIcon>
+              <ListItemText
+                primary={item.label}
+                primaryTypographyProps={{
+                  sx: {
+                    fontSize: 14,
+                    fontWeight: item.key === folder ? 600 : 400,
+                    color: item.key === folder ? "#4A5C92" : "#1A1B21",
+                  },
+                }}
+              />
+            </MenuItem>
+          ))}
+        </Menu>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <IconButton size="small" onClick={fetchEmails} sx={{ color: "#49454F" }}>
+          <IconButton size="small" onClick={() => fetchEmails({ force: true })} sx={{ color: "#49454F" }}>
             <SyncOutlined sx={{ fontSize: 24 }} />
           </IconButton>
           <Typography
