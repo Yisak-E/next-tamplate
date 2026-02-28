@@ -22,6 +22,26 @@ import ConfirmDialog from "./ConfirmDialog";
 
 const COLORS = ["#4A5C92", "#BA1A1A", "#5C8A5C", "#C4A265", "#7B6BA8", "#AD6B6B", "#6B8EAD"];
 
+// ── Module-level calendar cache ──
+interface CachedMonth {
+  events: CalendarEvent[];
+  ts: number;
+}
+const calendarCache = new Map<string, CachedMonth>();
+const CALENDAR_CACHE_TTL = 5 * 60 * 1000;
+
+function calendarCacheKey(year: number, month: number) {
+  return `${year}-${month}`;
+}
+
+export function invalidateCalendarCache(year?: number, month?: number) {
+  if (year !== undefined && month !== undefined) {
+    calendarCache.delete(calendarCacheKey(year, month));
+  } else {
+    calendarCache.clear();
+  }
+}
+
 function apiToEvent(e: ApiCalendarEvent): CalendarEvent {
   return {
     id: e._id,
@@ -54,31 +74,65 @@ function formatDate(year: number, month: number, day: number): string {
 
 export default function CalendarView() {
   const { token } = useAuth();
-  const [events, setEvents] = useState<CalendarEvent[]>([]);
-  const [loading, setLoading] = useState(false);
 
   const today = new Date();
   const todayStr = formatDate(today.getFullYear(), today.getMonth(), today.getDate());
 
   const [currentYear, setCurrentYear] = useState(today.getFullYear());
   const [currentMonth, setCurrentMonth] = useState(today.getMonth());
+
+  // Initialise from cache so the very first render has data
+  const initCached = calendarCache.get(calendarCacheKey(today.getFullYear(), today.getMonth()));
+  const [events, setEvents] = useState<CalendarEvent[]>(initCached?.events ?? []);
+  const [loading, setLoading] = useState(false);
+
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingEvent, setDeletingEvent] = useState<CalendarEvent | null>(null);
 
+  // Synchronously hydrate from cache on month/year change
+  const [prevMonthKey, setPrevMonthKey] = useState(calendarCacheKey(today.getFullYear(), today.getMonth()));
+  const curMonthKey = calendarCacheKey(currentYear, currentMonth);
+  if (curMonthKey !== prevMonthKey) {
+    setPrevMonthKey(curMonthKey);
+    const snap = calendarCache.get(curMonthKey);
+    if (snap) {
+      setEvents(snap.events);
+      setLoading(false);
+    } else {
+      setEvents([]);
+    }
+  }
+
   // Fetch events for the current month from the API
-  const fetchEvents = useCallback(async () => {
+  const fetchEvents = useCallback(async (opts?: { force?: boolean }) => {
     if (!token) return;
-    setLoading(true);
+
+    const key = calendarCacheKey(currentYear, currentMonth);
+    const cached = calendarCache.get(key);
+    const isStale = !cached || Date.now() - cached.ts > CALENDAR_CACHE_TTL;
+
+    // If cache is fresh and not forced, skip network
+    if (cached && !isStale && !opts?.force) return;
+
+    if (!cached) setLoading(true);
+
     try {
       const res = await calendarApi.list(token, {
         month: currentMonth + 1, // API expects 1-12
         year: currentYear,
         limit: 200,
       });
-      setEvents(res.data.map(apiToEvent));
+      const mapped = res.data.map(apiToEvent);
+
+      calendarCache.set(key, {
+        events: mapped,
+        ts: Date.now(),
+      });
+
+      setEvents(mapped);
     } catch (err) {
       console.error("Failed to fetch calendar events", err);
     } finally {
@@ -144,6 +198,7 @@ export default function CalendarView() {
       try {
         await calendarApi.delete(token, deletingEvent.id);
         setEvents((prev) => prev.filter((e) => e.id !== deletingEvent.id));
+        invalidateCalendarCache(currentYear, currentMonth);
       } catch (err) {
         console.error("Failed to delete event", err);
       }
@@ -178,6 +233,7 @@ export default function CalendarView() {
         });
         setEvents((prev) => [...prev, apiToEvent(created)]);
       }
+      invalidateCalendarCache(currentYear, currentMonth);
     } catch (err) {
       console.error("Failed to save event", err);
     }

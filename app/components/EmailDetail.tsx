@@ -8,6 +8,7 @@ import Divider from "@mui/material/Divider";
 import Chip from "@mui/material/Chip";
 import Tooltip from "@mui/material/Tooltip";
 import CircularProgress from "@mui/material/CircularProgress";
+import LinearProgress from "@mui/material/LinearProgress";
 import StarBorderIcon from "@mui/icons-material/StarBorder";
 import StarIcon from "@mui/icons-material/Star";
 import DeleteOutline from "@mui/icons-material/DeleteOutline";
@@ -43,22 +44,60 @@ interface EmailDetailProps {
   onRefreshList: () => void;
 }
 
+// ── Module-level cache for fetched full email bodies ──
+const emailDetailCache = new Map<string, MailboxEmail>();
+function detailKey(folder: string, uid: number) {
+  return `${folder}::${uid}`;
+}
+
+export function invalidateEmailDetailCache() {
+  emailDetailCache.clear();
+}
+
 export default function EmailDetail({ email, onRefreshList }: EmailDetailProps) {
   const { token } = useAuth();
-  const [fullEmail, setFullEmail] = useState<MailboxEmail>(email);
+
+  // Immediately show cached full version, otherwise fall back to list-level data
+  const cached = emailDetailCache.get(detailKey(email.folder || "inbox", email.uid));
+  const [fullEmail, setFullEmail] = useState<MailboxEmail>(cached ?? email);
   const [loading, setLoading] = useState(false);
+
+  // Synchronously apply cached data on email change (no waiting for useEffect)
+  const [prevUid, setPrevUid] = useState(email.uid);
+  if (email.uid !== prevUid) {
+    setPrevUid(email.uid);
+    const hit = emailDetailCache.get(detailKey(email.folder || "inbox", email.uid));
+    setFullEmail(hit ?? email);
+    setLoading(!hit);
+  }
 
   // Fetch full email body on mount or email change
   useEffect(() => {
     if (!token) return;
-    setLoading(true);
+
+    const key = detailKey(email.folder || "inbox", email.uid);
+    const hit = emailDetailCache.get(key);
+
+    if (hit) {
+      // Already fully loaded before – render instantly, no spinner
+      setFullEmail(hit);
+    } else {
+      // Show whatever the list gave us right away (subject/sender/snippet)
+      setFullEmail(email);
+      setLoading(true);
+    }
+
+    // Always fetch fresh data (silently if cached)
     emailApi
       .getEmail(token, email.folder || "inbox", email.uid)
       .then((data) => {
-        if (data) setFullEmail(data);
-        else setFullEmail(email);
+        const result = data ?? email;
+        emailDetailCache.set(key, result);
+        setFullEmail(result);
       })
-      .catch(() => setFullEmail(email))
+      .catch(() => {
+        if (!hit) setFullEmail(email);
+      })
       .finally(() => setLoading(false));
 
     // Mark as read
@@ -120,7 +159,7 @@ export default function EmailDetail({ email, onRefreshList }: EmailDetailProps) 
         overflow: "hidden",
       }}
     >
-      {loading ? (
+      {loading && !fullEmail.html && !fullEmail.text ? (
         <Box
           sx={{
             display: "flex",
@@ -134,6 +173,15 @@ export default function EmailDetail({ email, onRefreshList }: EmailDetailProps) 
       ) : (
         <>
           {/* Top toolbar */}
+          {loading && (
+            <LinearProgress
+              sx={{
+                height: 2,
+                bgcolor: "transparent",
+                "& .MuiLinearProgress-bar": { bgcolor: "#4A5C92" },
+              }}
+            />
+          )}
           <Box
             sx={{
               display: "flex",

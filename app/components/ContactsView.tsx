@@ -54,10 +54,30 @@ function apiToContact(ac: ApiContact): Contact {
   };
 }
 
+// ── Module-level contacts cache ──
+interface CachedContacts {
+  contacts: Contact[];
+  total: number;
+  ts: number;
+}
+const contactsCache = new Map<string, CachedContacts>();
+const CONTACTS_CACHE_TTL = 5 * 60 * 1000; // 5 min
+
+function contactsCacheKey(query: string) {
+  return query || "__all__";
+}
+
+export function invalidateContactsCache() {
+  contactsCache.clear();
+}
+
 export default function ContactsView() {
   const { token } = useAuth();
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [total, setTotal] = useState(0);
+
+  // Initialise from cache so the very first render has data
+  const initCached = contactsCache.get(contactsCacheKey(""));
+  const [contacts, setContacts] = useState<Contact[]>(initCached?.contacts ?? []);
+  const [total, setTotal] = useState(initCached?.total ?? 0);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
@@ -66,15 +86,42 @@ export default function ContactsView() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingContact, setDeletingContact] = useState<Contact | null>(null);
 
-  const fetchContacts = useCallback(async () => {
+  // Synchronously hydrate from cache on search query change
+  const [prevQuery, setPrevQuery] = useState("");
+  if (searchQuery !== prevQuery) {
+    setPrevQuery(searchQuery);
+    const snap = contactsCache.get(contactsCacheKey(searchQuery));
+    if (snap) {
+      setContacts(snap.contacts);
+      setTotal(snap.total);
+    }
+  }
+
+  const fetchContacts = useCallback(async (opts?: { force?: boolean }) => {
     if (!token) return;
-    setLoading(true);
+
+    const key = contactsCacheKey(searchQuery);
+    const cached = contactsCache.get(key);
+    const isStale = !cached || Date.now() - cached.ts > CONTACTS_CACHE_TTL;
+
+    // If cache is fresh and not forced, skip network
+    if (cached && !isStale && !opts?.force) return;
+
+    if (!cached) setLoading(true);
+
     try {
       const result = await contactsApi.list(token, {
         q: searchQuery || undefined,
         limit: 100,
       });
       const mapped = result.contacts.map(apiToContact);
+
+      contactsCache.set(key, {
+        contacts: mapped,
+        total: result.total,
+        ts: Date.now(),
+      });
+
       setContacts(mapped);
       setTotal(result.total);
     } catch (err) {
@@ -117,7 +164,8 @@ export default function ContactsView() {
       }
       setDeletingContact(null);
       setDeleteDialogOpen(false);
-      fetchContacts();
+      invalidateContactsCache();
+      fetchContacts({ force: true });
     } catch (err) {
       console.error("Failed to delete contact:", err);
       setDeleteDialogOpen(false);
@@ -155,7 +203,8 @@ export default function ContactsView() {
       }
       setDialogOpen(false);
       setEditingContact(null);
-      fetchContacts();
+      invalidateContactsCache();
+      fetchContacts({ force: true });
     } catch (err) {
       console.error("Failed to save contact:", err);
     }

@@ -133,11 +133,31 @@ export default function EmailList({
   selectedUid,
 }: EmailListProps) {
   const { token } = useAuth();
-  const [emails, setEmails] = useState<MailboxEmail[]>([]);
-  const [total, setTotal] = useState(0);
+
+  // Initialise state directly from cache so the very first render already has data
+  const initCached = folderCache.get(cacheKey(folder, "All"));
+  const [emails, setEmails] = useState<MailboxEmail[]>(initCached?.emails ?? []);
+  const [total, setTotal] = useState(initCached?.total ?? 0);
   const [loading, setLoading] = useState(false);
   const [activeFilter, setActiveFilter] = useState("All");
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
+
+  // Synchronously hydrate from cache whenever folder or filter changes
+  // (runs before useEffect, so UI never shows stale folder data)
+  const [prevKey, setPrevKey] = useState(cacheKey(folder, "All"));
+  const currentKey = cacheKey(folder, activeFilter);
+  if (currentKey !== prevKey) {
+    setPrevKey(currentKey);
+    const snap = folderCache.get(currentKey);
+    if (snap) {
+      setEmails(snap.emails);
+      setTotal(snap.total);
+      setLoading(false);
+    } else {
+      setEmails([]);
+      setTotal(0);
+    }
+  }
 
   const fetchEmails = useCallback(
     async (opts?: { force?: boolean }) => {
@@ -147,13 +167,8 @@ export default function EmailList({
       const cached = folderCache.get(key);
       const isStale = !cached || Date.now() - cached.ts > CACHE_TTL;
 
-      // Show cached data immediately (no spinner)
-      if (cached && !opts?.force) {
-        setEmails(cached.emails);
-        setTotal(cached.total);
-        // If cache is fresh, skip network entirely
-        if (!isStale) return;
-      }
+      // If cache is fresh and not forced, skip network entirely
+      if (cached && !isStale && !opts?.force) return;
 
       // Only show spinner when there's nothing cached to display
       if (!cached) setLoading(true);
