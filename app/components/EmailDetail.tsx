@@ -42,6 +42,10 @@ function getInitials(name: string): string {
 interface EmailDetailProps {
   email: MailboxEmail;
   onRefreshList: () => void;
+  /** Called when a field on the email changes (star, read/unread) so the list can update in-place */
+  onUpdateEmail?: (uid: number, patch: Partial<MailboxEmail>) => void;
+  /** Called after delete/archive removes the email from the current folder */
+  onRemoveEmail?: (uid: number) => void;
 }
 
 // ── Module-level cache for fetched full email bodies ──
@@ -54,7 +58,7 @@ export function invalidateEmailDetailCache() {
   emailDetailCache.clear();
 }
 
-export default function EmailDetail({ email, onRefreshList }: EmailDetailProps) {
+export default function EmailDetail({ email, onRefreshList, onUpdateEmail, onRemoveEmail }: EmailDetailProps) {
   const { token } = useAuth();
 
   // Immediately show cached full version, otherwise fall back to list-level data
@@ -100,8 +104,9 @@ export default function EmailDetail({ email, onRefreshList }: EmailDetailProps) 
       })
       .finally(() => setLoading(false));
 
-    // Mark as read
+    // Mark as read and notify parent immediately
     if (!email.isRead) {
+      onUpdateEmail?.(email.uid, { isRead: true });
       emailApi.markRead(token, email.folder || "inbox", email.uid).catch(() => {});
     }
   }, [token, email]);
@@ -114,16 +119,25 @@ export default function EmailDetail({ email, onRefreshList }: EmailDetailProps) 
 
   const handleToggleStar = async () => {
     if (!token) return;
+    const newFlagged = !fullEmail.isFlagged;
+    // Optimistic update
+    setFullEmail((prev) => ({ ...prev, isFlagged: newFlagged }));
+    onUpdateEmail?.(fullEmail.uid, { isFlagged: newFlagged });
     try {
       await emailApi.toggleStar(
         token,
         fullEmail.folder || "inbox",
         fullEmail.uid,
-        !fullEmail.isFlagged
+        newFlagged
       );
-      setFullEmail((prev) => ({ ...prev, isFlagged: !prev.isFlagged }));
+      // Update detail cache
+      const key = detailKey(fullEmail.folder || "inbox", fullEmail.uid);
+      const c = emailDetailCache.get(key);
+      if (c) emailDetailCache.set(key, { ...c, isFlagged: newFlagged });
     } catch {
-      // ignore
+      // Revert on failure
+      setFullEmail((prev) => ({ ...prev, isFlagged: !newFlagged }));
+      onUpdateEmail?.(fullEmail.uid, { isFlagged: !newFlagged });
     }
   };
 
@@ -131,7 +145,17 @@ export default function EmailDetail({ email, onRefreshList }: EmailDetailProps) 
     if (!token) return;
     try {
       await emailApi.deleteEmail(token, fullEmail.folder || "inbox", fullEmail.uid);
-      onRefreshList();
+      onRemoveEmail?.(fullEmail.uid);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleArchive = async () => {
+    if (!token) return;
+    try {
+      await emailApi.moveEmail(token, fullEmail.folder || "inbox", fullEmail.uid, "Archive");
+      onRemoveEmail?.(fullEmail.uid);
     } catch {
       // ignore
     }
@@ -139,11 +163,16 @@ export default function EmailDetail({ email, onRefreshList }: EmailDetailProps) 
 
   const handleMarkUnread = async () => {
     if (!token) return;
+    setFullEmail((prev) => ({ ...prev, isRead: false }));
+    onUpdateEmail?.(fullEmail.uid, { isRead: false });
     try {
       await emailApi.markUnread(token, fullEmail.folder || "inbox", fullEmail.uid);
-      onRefreshList();
+      const key = detailKey(fullEmail.folder || "inbox", fullEmail.uid);
+      const c = emailDetailCache.get(key);
+      if (c) emailDetailCache.set(key, { ...c, isRead: false });
     } catch {
-      // ignore
+      setFullEmail((prev) => ({ ...prev, isRead: true }));
+      onUpdateEmail?.(fullEmail.uid, { isRead: true });
     }
   };
 
@@ -207,7 +236,7 @@ export default function EmailDetail({ email, onRefreshList }: EmailDetailProps) 
               </IconButton>
             </Tooltip>
             <Tooltip title="Archive">
-              <IconButton size="small" sx={{ color: "#49454F" }}>
+              <IconButton size="small" onClick={handleArchive} sx={{ color: "#49454F" }}>
                 <ArchiveOutlined />
               </IconButton>
             </Tooltip>

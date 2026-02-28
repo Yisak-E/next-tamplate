@@ -13,7 +13,11 @@ import CancelOutlined from "@mui/icons-material/CancelOutlined";
 import LogoutIcon from "@mui/icons-material/Logout";
 import Tooltip from "@mui/material/Tooltip";
 import NavigationRail from "./components/NavigationRail";
-import EmailList, { invalidateFolderCache } from "./components/EmailList";
+import EmailList, {
+  invalidateFolderCache,
+  updateEmailInCache,
+  removeEmailFromCache,
+} from "./components/EmailList";
 import EmailDetail from "./components/EmailDetail";
 import ComposeDialog from "./components/ComposeDialog";
 import CalendarView from "./components/CalendarView";
@@ -32,9 +36,42 @@ export default function Home() {
   const [emailListKey, setEmailListKey] = useState(0);
   // refresh key bumped when cache is invalidated – forces EmailList re-fetch
 
-  const handleSelectEmail = useCallback((email: MailboxEmail) => {
-    setSelectedEmail(email);
-  }, []);
+  const handleSelectEmail = useCallback(
+    (email: MailboxEmail) => {
+      setSelectedEmail(email);
+      // Immediately mark as read in the list cache so the UI reflects it
+      if (!email.isRead) {
+        updateEmailInCache(email.folder || activeFolder, email.uid, {
+          isRead: true,
+        });
+        setEmailListKey((k) => k + 1);
+      }
+    },
+    [activeFolder]
+  );
+
+  /** Update a single email property in the list (star, read/unread) without full refresh */
+  const handleUpdateEmail = useCallback(
+    (uid: number, patch: Partial<MailboxEmail>) => {
+      updateEmailInCache(activeFolder, uid, patch);
+      setEmailListKey((k) => k + 1);
+      // Also update the selected email so detail keeps in-sync
+      setSelectedEmail((prev) =>
+        prev && prev.uid === uid ? { ...prev, ...patch } : prev
+      );
+    },
+    [activeFolder]
+  );
+
+  /** Remove an email from the list (delete / archive) and clear selection */
+  const handleRemoveEmail = useCallback(
+    (uid: number) => {
+      removeEmailFromCache(activeFolder, uid);
+      setSelectedEmail(null);
+      setEmailListKey((k) => k + 1);
+    },
+    [activeFolder]
+  );
 
   const handleRefreshList = useCallback(() => {
     setSelectedEmail(null);
@@ -239,6 +276,8 @@ export default function Home() {
                 <EmailDetail
                   email={selectedEmail}
                   onRefreshList={handleRefreshList}
+                  onUpdateEmail={handleUpdateEmail}
+                  onRemoveEmail={handleRemoveEmail}
                 />
               ) : (
                 <Box
