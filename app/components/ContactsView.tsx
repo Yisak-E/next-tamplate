@@ -42,7 +42,7 @@ function getAvatarColor(name: string): string {
 
 function apiToContact(ac: ApiContact): Contact {
   return {
-    id: ac._id,
+    id: ac._id || ac.id || "",
     name: ac.name,
     email: ac.email,
     phone: ac.phone || "",
@@ -158,24 +158,33 @@ export default function ContactsView() {
   const handleDeleteConfirm = async () => {
     if (!token || !deletingContact) return;
 
-    // Optimistic: remove from UI immediately
+    // Optimistic: remove from UI and cache immediately
     const removedContact = deletingContact;
-    setContacts((prev) => prev.filter((c) => c.id !== removedContact.id));
-    setTotal((prev) => Math.max(0, prev - 1));
+    const updatedContacts = contacts.filter((c) => c.id !== removedContact.id);
+    const updatedTotal = Math.max(0, total - 1);
+
+    setContacts(updatedContacts);
+    setTotal(updatedTotal);
     if (selectedContact?.id === removedContact.id) {
       setSelectedContact(null);
     }
     setDeletingContact(null);
     setDeleteDialogOpen(false);
 
+    // Also update the cache so remounts / search hydration stay consistent
+    const key = contactsCacheKey(searchQuery);
+    contactsCache.set(key, { contacts: updatedContacts, total: updatedTotal, ts: Date.now() });
+
     try {
       await contactsApi.delete(token, removedContact.id);
       invalidateContactsCache();
+      fetchContacts({ force: true });
     } catch (err) {
       console.error("Failed to delete contact:", err);
-      // Rollback: re-add the contact
+      // Rollback state and cache
       setContacts((prev) => [...prev, removedContact]);
       setTotal((prev) => prev + 1);
+      invalidateContactsCache();
     }
   };
 
@@ -226,6 +235,7 @@ export default function ContactsView() {
           setSelectedContact(mapped);
         }
         invalidateContactsCache();
+        fetchContacts({ force: true });
       } catch (err) {
         console.error("Failed to update contact:", err);
         // Rollback
@@ -245,6 +255,7 @@ export default function ContactsView() {
         setTotal((prev) => prev + 1);
         setSelectedContact(mapped);
         invalidateContactsCache();
+        fetchContacts({ force: true });
       } catch (err) {
         console.error("Failed to create contact:", err);
       }

@@ -288,6 +288,7 @@ export const emailApi = {
 
 export interface ApiContact {
   _id: string;
+  id?: string;
   userId: string;
   name: string;
   email: string;
